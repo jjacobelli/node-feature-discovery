@@ -64,6 +64,7 @@ type Annotations map[string]string
 type Args struct {
 	CaFile         string
 	CertFile       string
+	ExtraLabelNs   []string
 	KeyFile        string
 	LabelWhiteList *regexp.Regexp
 	NoPublish      bool
@@ -214,6 +215,29 @@ func filterFeatureLabels(labels Labels, labelWhiteList *regexp.Regexp) Labels {
 	return labels
 }
 
+// Filter label namespaces and set default namespace to labels without one
+func filterNamespaceLabels(labels Labels, extraLabelNs []string) Labels {
+	allowedLabels := make(Labels)
+L:
+	for labelName, labelValue := range labels {
+		// If there is no namespace in the name
+		if !strings.Contains(labelName, "/") {
+			allowedLabels[labelNs+labelName] = labelValue
+			continue
+		}
+
+		ns := strings.Split(labelName, "/")[0]
+		for _, extraNs := range extraLabelNs {
+			if ns == extraNs {
+				allowedLabels[labelName] = labelValue
+				continue L
+			}
+		}
+		stderrLogger.Printf("Namespace '%s' is not allowed. Ignoring label '%s'\n", ns, labelName)
+	}
+	return allowedLabels
+}
+
 // Implement LabelerServer
 type labelerServer struct {
 	args      Args
@@ -248,6 +272,7 @@ func (s *labelerServer) SetLabels(c context.Context, r *pb.SetLabelsRequest) (*p
 	stdoutLogger.Printf("REQUEST Node: %s NFD-version: %s Labels: %s", r.NodeName, r.NfdVersion, r.Labels)
 
 	labels := filterFeatureLabels(r.Labels, s.args.LabelWhiteList)
+	labels = filterNamespaceLabels(labels, s.args.ExtraLabelNs)
 
 	if !s.args.NoPublish {
 		// Advertise NFD worker version and label names as annotations
@@ -320,14 +345,14 @@ func removeLabelsWithPrefix(n *api.Node, search string) {
 // Removes NFD labels from a Node object
 func removeLabels(n *api.Node, labelNames []string) {
 	for _, l := range labelNames {
-		delete(n.Labels, labelNs+l)
+		delete(n.Labels, l)
 	}
 }
 
 // Add NFD labels to a Node object.
 func addLabels(n *api.Node, labels map[string]string) {
 	for k, v := range labels {
-		n.Labels[labelNs+k] = v
+		n.Labels[k] = v
 	}
 }
 

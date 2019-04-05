@@ -64,7 +64,7 @@ func TestUpdateNodeFeatures(t *testing.T) {
 		// Mock node with old features
 		mockNode := newMockNode()
 		mockNode.Labels[labelNs+"old-feature"] = "old-value"
-		mockNode.Annotations[annotationNs+"feature-labels"] = "old-feature"
+		mockNode.Annotations[annotationNs+"feature-labels"] = labelNs + "old-feature"
 
 		Convey("When I successfully update the node with feature labels", func() {
 			mockAPIHelper.On("GetClient").Return(mockClient, nil)
@@ -78,7 +78,7 @@ func TestUpdateNodeFeatures(t *testing.T) {
 			Convey("Node object should have updated with labels and annotations", func() {
 				So(len(mockNode.Labels), ShouldEqual, len(fakeFeatureLabels))
 				for k, v := range fakeFeatureLabels {
-					So(mockNode.Labels[labelNs+k], ShouldEqual, v)
+					So(mockNode.Labels[k], ShouldEqual, v)
 				}
 				So(len(mockNode.Annotations), ShouldEqual, len(fakeAnnotations))
 				for k, v := range fakeAnnotations {
@@ -192,7 +192,7 @@ func TestSetLabels(t *testing.T) {
 
 		mockLabelNames := make([]string, 0, len(mockLabels))
 		for k := range mockLabels {
-			mockLabelNames = append(mockLabelNames, k)
+			mockLabelNames = append(mockLabelNames, labelNs+k)
 		}
 		sort.Strings(mockLabelNames)
 		expectedAnnotations := map[string]string{"worker.version": workerVer}
@@ -231,7 +231,30 @@ func TestSetLabels(t *testing.T) {
 				So(len(mockNode.Labels), ShouldEqual, 1)
 				So(mockNode.Labels, ShouldResemble, map[string]string{labelNs + "feature-2": "val-2"})
 
-				a := map[string]string{annotationNs + "worker.version": workerVer, annotationNs + "feature-labels": "feature-2"}
+				a := map[string]string{annotationNs + "worker.version": workerVer, annotationNs + "feature-labels": labelNs+"feature-2"}
+				So(len(mockNode.Annotations), ShouldEqual, len(a))
+				So(mockNode.Annotations, ShouldResemble, a)
+			})
+		})
+
+		Convey("When --extra-label-ns is specified", func () {
+			mockServer.args.ExtraLabelNs = []string{"valid.ns"}
+			mockHelper.On("GetClient").Return(mockClient, nil)
+			mockHelper.On("GetNode", mockClient, workerName).Return(mockNode, nil)
+			mockHelper.On("UpdateNode", mockClient, mockNode).Return(nil)
+			mockLabels := map[string]string{"feature-1": "val-1",
+				"valid.ns/feature-2": "val-2",
+				"invalid.ns/feature-3": "val-3"}
+			mockReq := &labeler.SetLabelsRequest{NodeName: workerName, NfdVersion: workerVer, Labels: mockLabels}
+			_, err := mockServer.SetLabels(mockCtx, mockReq)
+			Convey("Error is nil", func() {
+				So(err, ShouldBeNil)
+			})
+			Convey("Node object should only have allowed label namespaces", func() {
+				So(len(mockNode.Labels), ShouldEqual, 2)
+				So(mockNode.Labels, ShouldResemble, map[string]string{labelNs + "feature-1": "val-1", "valid.ns/feature-2": "val-2"})
+
+				a := map[string]string{annotationNs + "worker.version": workerVer, annotationNs + "feature-labels": labelNs+"feature-1,valid.ns/feature-2"}
 				So(len(mockNode.Annotations), ShouldEqual, len(a))
 				So(mockNode.Annotations, ShouldResemble, a)
 			})
@@ -277,7 +300,7 @@ func TestAddLabels(t *testing.T) {
 			test1 := "test1"
 			labels[test1] = "true"
 			addLabels(n, labels)
-			So(n.Labels, ShouldContainKey, labelNs+test1)
+			So(n.Labels, ShouldContainKey, test1)
 		})
 	})
 }
