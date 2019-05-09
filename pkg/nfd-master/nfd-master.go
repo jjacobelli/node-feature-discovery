@@ -203,39 +203,32 @@ func updateMasterNode(helper apihelper.APIHelpers) error {
 	return nil
 }
 
-// Filter labels if whitelist has been defined
-func filterFeatureLabels(labels Labels, labelWhiteList *regexp.Regexp) Labels {
-	for name := range labels {
+// Filter labels by namespace and name whitelist
+func filterFeatureLabels(labels Labels, extraLabelNs []string, labelWhiteList *regexp.Regexp) Labels {
+	for label := range labels {
+		split := strings.SplitN(label, "/", 2)
+		name := split[0]
+
+		// Check namespaced labels, filter out if ns is not whitelisted
+		if len(split) == 2 {
+			ns := split[0]
+			name = split[1]
+			for i, extraNs := range extraLabelNs {
+				if ns == extraNs {
+					break
+				} else if i == len(extraLabelNs)-1 {
+					delete(labels, label)
+				}
+			}
+		}
+
 		// Skip if label doesn't match labelWhiteList
 		if !labelWhiteList.MatchString(name) {
 			stderrLogger.Printf("%s does not match the whitelist (%s) and will not be published.", name, labelWhiteList.String())
-			delete(labels, name)
+			delete(labels, label)
 		}
 	}
 	return labels
-}
-
-// Filter label namespaces and set default namespace to labels without one
-func filterNamespaceLabels(labels Labels, extraLabelNs []string) Labels {
-	allowedLabels := make(Labels)
-L:
-	for labelName, labelValue := range labels {
-		// If there is no namespace in the name
-		if !strings.Contains(labelName, "/") {
-			allowedLabels[labelNs+labelName] = labelValue
-			continue
-		}
-
-		ns := strings.Split(labelName, "/")[0]
-		for _, extraNs := range extraLabelNs {
-			if ns == extraNs {
-				allowedLabels[labelName] = labelValue
-				continue L
-			}
-		}
-		stderrLogger.Printf("Namespace '%s' is not allowed. Ignoring label '%s'\n", ns, labelName)
-	}
-	return allowedLabels
 }
 
 // Implement LabelerServer
@@ -271,8 +264,7 @@ func (s *labelerServer) SetLabels(c context.Context, r *pb.SetLabelsRequest) (*p
 	}
 	stdoutLogger.Printf("REQUEST Node: %s NFD-version: %s Labels: %s", r.NodeName, r.NfdVersion, r.Labels)
 
-	labels := filterFeatureLabels(r.Labels, s.args.LabelWhiteList)
-	labels = filterNamespaceLabels(labels, s.args.ExtraLabelNs)
+	labels := filterFeatureLabels(r.Labels, s.args.ExtraLabelNs, s.args.LabelWhiteList)
 
 	if !s.args.NoPublish {
 		// Advertise NFD worker version and label names as annotations
@@ -345,14 +337,22 @@ func removeLabelsWithPrefix(n *api.Node, search string) {
 // Removes NFD labels from a Node object
 func removeLabels(n *api.Node, labelNames []string) {
 	for _, l := range labelNames {
-		delete(n.Labels, l)
+		if strings.Contains(l, "/") {
+			delete(n.Labels, l)
+		} else {
+			delete(n.Labels, labelNs+l)
+		}
 	}
 }
 
 // Add NFD labels to a Node object.
 func addLabels(n *api.Node, labels map[string]string) {
 	for k, v := range labels {
-		n.Labels[k] = v
+		if strings.Contains(k, "/") {
+			n.Labels[k] = v
+		} else {
+			n.Labels[labelNs+k] = v
+		}
 	}
 }
 
